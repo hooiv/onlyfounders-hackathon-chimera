@@ -192,3 +192,13 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Project Chimera specific
+*.bst
+*.pkl
+*.joblib
+data/
+logs/
+models/
+.DS_Store
+Thumbs.db
