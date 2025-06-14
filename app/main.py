@@ -1,94 +1,80 @@
-"""
-Project Chimera - FastAPI Server
-Track 3: Fundraise Prediction Agent
-
-This module contains the main FastAPI application for the fundraise prediction agent.
-"""
-
 from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Dict, Any
-import uvicorn
+from pydantic import BaseModel, Field
 
+# --- 1. DEFINE THE API ---
+# Create a FastAPI instance. This is the main point of interaction for our API.
+# The title and version will show up in the auto-generated documentation.
 app = FastAPI(
-    title="Project Chimera - Fundraise Prediction Agent",
-    description="Privacy-preserving fundraise prediction agent for OnlyFounders AI swarm",
-    version="1.0.0"
+    title="Project Chimera: Fundraise Prediction Agent",
+    version="1.0",
+    description="A privacy-preserving AI agent to predict startup fundraising success."
 )
 
-class PredictionInput(BaseModel):
-    """Input model for prediction requests"""
-    pitch_score: float
-    trust_score: float
-    momentum_score: float
 
+# --- 2. DEFINE THE INPUT DATA MODEL ---
+# Pydantic models give us data validation and typing for free.
+# This defines the exact structure of the JSON we expect to receive.
+# 'Field' allows us to add validation rules, e.g., scores must be between 0 and 10.
+class AgentInput(BaseModel):
+    pitch_strength_score: float = Field(..., ge=0, le=10, description="Score from the Pitch Strength Agent (0-10)")
+    identity_model_score: float = Field(..., ge=0, le=10, description="Score from the Identity Model Agent (0-10)")
+    momentum_tracker_score: float = Field(..., ge=0, le=10, description="Score from the Momentum Tracker Agent (0-10)")
+
+    class Config:
+        # This provides a sample payload that will appear in the API docs.
+        # It makes it much easier to test and understand the endpoint.
+        schema_extra = {
+            "example": {
+                "pitch_strength_score": 8.5,
+                "identity_model_score": 7.2,
+                "momentum_tracker_score": 6.8
+            }
+        }
+
+
+# --- 3. DEFINE THE OUTPUT DATA MODEL ---
+# This defines the structure of the JSON response our API will send back.
 class PredictionOutput(BaseModel):
-    """Output model for prediction responses"""
     prediction_score: float
     prediction_label: str
-    key_drivers: List[str]
+    key_drivers: list[str]
 
-@app.get("/")
-async def root():
-    """Health check endpoint"""
-    return {"message": "Project Chimera - Fundraise Prediction Agent is running"}
 
+# --- 4. CREATE THE PREDICTION ENDPOINT ---
+# The decorator '@app.post("/predict")' tells FastAPI to create a POST endpoint at the URL '/predict'.
+# It will automatically handle JSON parsing for inputs that match 'AgentInput'.
+# The 'response_model' ensures our output matches the 'PredictionOutput' structure.
 @app.post("/predict", response_model=PredictionOutput)
-async def predict_fundraise(input_data: PredictionInput):
+async def predict(input_data: AgentInput):
     """
-    Main prediction endpoint
-    
-    Takes privacy-preserving scores from other agents and returns
-    an explainable fundraise prediction.
-    """
-    # TODO: Implement actual prediction logic
-    # This is a placeholder implementation
-    
-    # Simple weighted average for now
-    weighted_score = (
-        input_data.pitch_score * 0.4 +
-        input_data.trust_score * 0.35 +
-        input_data.momentum_score * 0.25
-    ) / 10.0  # Normalize to 0-1 range
-    
-    # Determine label
-    if weighted_score >= 0.7:
-        label = "Likely to Fund"
-    elif weighted_score >= 0.5:
-        label = "Moderate Potential"
-    else:
-        label = "Low Funding Probability"
-    
-    # Simple key drivers logic
-    scores = {
-        "pitch_score": input_data.pitch_score,
-        "trust_score": input_data.trust_score,
-        "momentum_score": input_data.momentum_score
-    }
-    
-    # Find top 2 drivers
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    key_drivers = []
-    
-    if sorted_scores[0][0] == "pitch_score":
-        key_drivers.append("High Pitch Strength" if sorted_scores[0][1] >= 7 else "Moderate Pitch Strength")
-    elif sorted_scores[0][0] == "trust_score":
-        key_drivers.append("Strong Founder Trust" if sorted_scores[0][1] >= 7 else "Moderate Founder Trust")
-    else:
-        key_drivers.append("Strong Momentum" if sorted_scores[0][1] >= 7 else "Moderate Momentum")
-    
-    if sorted_scores[1][0] == "pitch_score":
-        key_drivers.append("Pitch Quality" if sorted_scores[1][1] >= 6 else "Pitch Needs Improvement")
-    elif sorted_scores[1][0] == "trust_score":
-        key_drivers.append("Founder Credibility" if sorted_scores[1][1] >= 6 else "Trust Building Needed")
-    else:
-        key_drivers.append("Market Traction" if sorted_scores[1][1] >= 6 else "Limited Traction")
-    
-    return PredictionOutput(
-        prediction_score=round(weighted_score, 2),
-        prediction_label=label,
-        key_drivers=key_drivers[:2]
-    )
+    Accepts scores from other AI agents and returns a fundraise prediction.
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    - **pitch_strength_score**: The narrative and clarity score of the project's pitch.
+    - **identity_model_score**: The trust and reputation score of the founder/team.
+    - **momentum_tracker_score**: The traction and community engagement score.
+    """
+
+    # --- MOCK PREDICTION LOGIC (FOR NOW) ---
+    # This is a placeholder. In Day 3, we will replace this with our actual XGBoost model.
+    # We are checking a simple condition to return one of two mock responses.
+
+    if input_data.pitch_strength_score > 7:
+        mock_response = {
+            "prediction_score": 0.82,
+            "prediction_label": "Likely to Fund",
+            "key_drivers": ["High Pitch Strength", "Strong Founder Trust"]
+        }
+    else:
+        mock_response = {
+            "prediction_score": 0.34,
+            "prediction_label": "Unlikely to Fund",
+            "key_drivers": ["Low Pitch Strength", "Weak Momentum"]
+        }
+
+    return mock_response
+
+# --- 5. ADD A ROOT ENDPOINT FOR HEALTH CHECKS ---
+# This is a best practice. It's a simple endpoint to check if the API is running.
+@app.get("/")
+def read_root():
+    return {"status": "ok", "agent": "Project Chimera v1.0"}
