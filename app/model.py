@@ -1,181 +1,82 @@
-"""
-Project Chimera - Model Logic
-Track 3: Fundraise Prediction Agent
-
-This module contains the machine learning model loading and prediction logic.
-"""
-
-import joblib
-import numpy as np
+import xgboost as xgb
 import pandas as pd
-from typing import Dict, List, Tuple
 import shap
-from pathlib import Path
+import os
 
-class FundraisePredictionModel:
+# --- 1. LOAD THE MODEL AND EXPLAINER ON STARTUP ---
+
+# Define the path to the model file.
+# This makes the code robust to where you run it from.
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "ml")
+MODEL_PATH = os.path.join(MODEL_DIR, "predictor.bst")
+
+# Load the XGBoost model from the file.
+# This is done once when the application starts, making predictions faster.
+print(f"Loading model from: {MODEL_PATH}")
+model = xgb.Booster()
+model.load_model(MODEL_PATH)
+print("Model loaded successfully.")
+
+# Create a SHAP explainer object.
+# This is used to understand the "why" behind each prediction.
+# Like the model, it's loaded once for efficiency.
+explainer = shap.TreeExplainer(model)
+print("SHAP explainer created.")
+
+# Define the feature names in the exact order the model was trained on.
+# This is CRITICAL for both prediction and explanation.
+feature_names = ["pitch_strength_score", "identity_model_score", "momentum_tracker_score"]
+
+
+def predict_and_explain(input_data: dict) -> dict:
     """
-    Main prediction model class for fundraise prediction.
-    
-    This class handles:
-    - Model loading and initialization
-    - Input preprocessing and validation
-    - Prediction generation
-    - SHAP-based explainability
+    Takes a dictionary of input scores, makes a prediction, and explains it.
+
+    Args:
+        input_data (dict): A dictionary with keys matching the feature_names.
+
+    Returns:
+        dict: A dictionary containing the prediction, label, and key drivers.
     """
-    
-    def __init__(self, model_path: str = None):
-        """Initialize the prediction model"""
-        self.model = None
-        self.explainer = None
-        self.feature_names = ['pitch_score', 'trust_score', 'momentum_score']
-        
-        if model_path and Path(model_path).exists():
-            self.load_model(model_path)
-        else:
-            # Initialize with a simple baseline model for demo purposes
-            self._initialize_baseline_model()
-    
-    def _initialize_baseline_model(self):
-        """Initialize a simple baseline model for demonstration"""
-        # This is a placeholder - in production, this would load a trained XGBoost model
-        print("Initializing baseline model (placeholder)")
-        
-    def load_model(self, model_path: str):
-        """Load a trained model from disk"""
-        try:
-            self.model = joblib.load(model_path)
-            # Initialize SHAP explainer
-            # self.explainer = shap.TreeExplainer(self.model)
-            print(f"Model loaded successfully from {model_path}")
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            self._initialize_baseline_model()
-    
-    def preprocess_input(self, input_data: Dict[str, float]) -> np.ndarray:
-        """
-        Preprocess and validate input data
-        
-        Args:
-            input_data: Dictionary with pitch_score, trust_score, momentum_score
-            
-        Returns:
-            Preprocessed numpy array ready for prediction
-        """
-        # Validate input
-        required_features = self.feature_names
-        for feature in required_features:
-            if feature not in input_data:
-                raise ValueError(f"Missing required feature: {feature}")
-        
-        # Extract features in correct order
-        features = [input_data[feature] for feature in required_features]
-        
-        # Validate score ranges (should be 0-10)
-        for i, score in enumerate(features):
-            if not 0 <= score <= 10:
-                print(f"Warning: {required_features[i]} = {score} is outside expected range [0, 10]")
-        
-        return np.array(features).reshape(1, -1)
-    
-    def predict(self, input_data: Dict[str, float]) -> Tuple[float, str]:
-        """
-        Generate prediction for fundraise success
-        
-        Args:
-            input_data: Dictionary with input scores
-            
-        Returns:
-            Tuple of (prediction_score, prediction_label)
-        """
-        # Preprocess input
-        X = self.preprocess_input(input_data)
-        
-        if self.model is not None:
-            # Use trained model
-            prediction_score = float(self.model.predict_proba(X)[0][1])
-        else:
-            # Use baseline logic
-            prediction_score = self._baseline_prediction(input_data)
-        
-        # Convert to label
-        if prediction_score >= 0.7:
-            label = "Likely to Fund"
-        elif prediction_score >= 0.5:
-            label = "Moderate Potential"
-        else:
-            label = "Low Funding Probability"
-        
-        return prediction_score, label
-    
-    def _baseline_prediction(self, input_data: Dict[str, float]) -> float:
-        """Simple baseline prediction logic"""
-        # Weighted average with some non-linearity
-        weighted_score = (
-            input_data['pitch_score'] * 0.4 +
-            input_data['trust_score'] * 0.35 +
-            input_data['momentum_score'] * 0.25
-        ) / 10.0
-        
-        # Add some non-linearity
-        if weighted_score >= 0.8:
-            weighted_score = min(0.95, weighted_score * 1.1)
-        elif weighted_score <= 0.3:
-            weighted_score = max(0.05, weighted_score * 0.8)
-        
-        return weighted_score
-    
-    def explain_prediction(self, input_data: Dict[str, float]) -> List[str]:
-        """
-        Generate explanation for the prediction using SHAP or simple logic
-        
-        Args:
-            input_data: Dictionary with input scores
-            
-        Returns:
-            List of key drivers for the prediction
-        """
-        if self.explainer is not None:
-            # Use SHAP for explanation
-            X = self.preprocess_input(input_data)
-            shap_values = self.explainer.shap_values(X)
-            
-            # Get feature importance
-            feature_importance = list(zip(self.feature_names, shap_values[0]))
-            feature_importance.sort(key=lambda x: abs(x[1]), reverse=True)
-            
-            # Generate explanations
-            explanations = []
-            for feature, importance in feature_importance[:2]:
-                if feature == 'pitch_score':
-                    explanations.append("High Pitch Strength" if importance > 0 else "Weak Pitch")
-                elif feature == 'trust_score':
-                    explanations.append("Strong Founder Trust" if importance > 0 else "Trust Concerns")
-                else:
-                    explanations.append("Strong Momentum" if importance > 0 else "Limited Momentum")
-            
-            return explanations
-        else:
-            # Use simple rule-based explanation
-            return self._simple_explanation(input_data)
-    
-    def _simple_explanation(self, input_data: Dict[str, float]) -> List[str]:
-        """Simple rule-based explanation"""
-        scores = [
-            ('pitch_score', input_data['pitch_score'], 'Pitch Strength'),
-            ('trust_score', input_data['trust_score'], 'Founder Trust'),
-            ('momentum_score', input_data['momentum_score'], 'Market Momentum')
-        ]
-        
-        # Sort by score value
-        scores.sort(key=lambda x: x[1], reverse=True)
-        
-        explanations = []
-        for _, score, name in scores[:2]:
-            if score >= 7:
-                explanations.append(f"High {name}")
-            elif score >= 5:
-                explanations.append(f"Moderate {name}")
-            else:
-                explanations.append(f"Low {name}")
-        
-        return explanations
+    # --- 1. PREPARE THE INPUT ---
+    # Convert the input dictionary to a pandas DataFrame.
+    # The model expects a 2D array, so we wrap it in a list.
+    # Ensure the columns are in the same order as during training.
+    input_df = pd.DataFrame([input_data])[feature_names]
+
+    # --- 2. MAKE PREDICTION ---
+    # Convert the DataFrame to a DMatrix, XGBoost's internal data structure.
+    dmatrix = xgb.DMatrix(input_df)
+
+    # Use the model to predict the probability of success (funding).
+    # The output is a probability score between 0 and 1.
+    prediction_score = model.predict(dmatrix)[0]
+
+    # Convert the numerical score to a human-readable label.
+    prediction_label = "Likely to Fund" if prediction_score > 0.5 else "Unlikely to Fund"
+
+    # --- 3. EXPLAIN THE PREDICTION ---
+    # Use the SHAP explainer to calculate Shapley values for this specific prediction.
+    # Shapley values show the contribution of each feature to the final prediction.
+    shap_values = explainer.shap_values(input_df)
+
+    # Associate feature names with their SHAP values.
+    feature_impact = dict(zip(feature_names, shap_values[0]))
+
+    # Sort features by the absolute magnitude of their impact.
+    # This tells us which features were most influential.
+    sorted_drivers = sorted(feature_impact.items(), key=lambda item: abs(item[1]), reverse=True)
+
+    # Format the key drivers for a clean API response.
+    # We'll just take the top 2 most influential features.
+    key_drivers = [f"Impact of {name.replace('_', ' ').title()}" for name, impact in sorted_drivers[:2]]
+
+    # --- 4. FORMAT THE OUTPUT ---
+    # Bundle everything into a structured dictionary for the API to return.
+    result = {
+        "prediction_score": float(prediction_score),
+        "prediction_label": prediction_label,
+        "key_drivers": key_drivers
+    }
+
+    return result

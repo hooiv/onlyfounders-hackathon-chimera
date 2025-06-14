@@ -1,143 +1,102 @@
-"""
-Project Chimera - Model Training Script
-Track 3: Fundraise Prediction Agent
-
-This script trains the XGBoost model for fundraise prediction.
-"""
-
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
 import xgboost as xgb
-import joblib
-import shap
-from pathlib import Path
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+import os
 
-def generate_synthetic_data(n_samples: int = 1000) -> pd.DataFrame:
-    """
-    Generate synthetic training data for demonstration purposes.
-    
-    In a real implementation, this would be replaced with actual
-    historical fundraising data.
-    """
-    np.random.seed(42)
-    
-    # Generate correlated features
-    pitch_scores = np.random.normal(6.5, 2.0, n_samples)
-    trust_scores = np.random.normal(6.0, 1.8, n_samples)
-    momentum_scores = np.random.normal(5.5, 2.2, n_samples)
-    
-    # Clip to valid range
-    pitch_scores = np.clip(pitch_scores, 0, 10)
-    trust_scores = np.clip(trust_scores, 0, 10)
-    momentum_scores = np.clip(momentum_scores, 0, 10)
-    
-    # Generate target variable with realistic relationships
-    # Higher scores should generally lead to higher funding probability
-    funding_probability = (
-        0.4 * (pitch_scores / 10) +
-        0.35 * (trust_scores / 10) +
-        0.25 * (momentum_scores / 10)
-    )
-    
-    # Add some noise and non-linearity
-    noise = np.random.normal(0, 0.1, n_samples)
-    funding_probability += noise
-    
-    # Apply sigmoid-like transformation for realism
-    funding_probability = 1 / (1 + np.exp(-5 * (funding_probability - 0.5)))
-    
-    # Convert to binary labels (funded vs not funded)
-    # Use a threshold that gives roughly 30% positive class
-    threshold = np.percentile(funding_probability, 70)
-    funded = (funding_probability > threshold).astype(int)
-    
-    # Create DataFrame
-    data = pd.DataFrame({
-        'pitch_score': pitch_scores,
-        'trust_score': trust_scores,
-        'momentum_score': momentum_scores,
-        'funding_probability': funding_probability,
-        'funded': funded
-    })
-    
-    return data
+# --- 1. SETTINGS ---
+# Define the path where the model will be saved.
+# os.path.join ensures it works on any operating system.
+MODEL_DIR = os.path.dirname(__file__)
+MODEL_PATH = os.path.join(MODEL_DIR, "predictor.bst")
+NUM_SAMPLES = 1000  # The number of mock data points to generate.
 
-def train_model(data: pd.DataFrame) -> xgb.XGBClassifier:
+def generate_mock_data(num_samples: int) -> pd.DataFrame:
     """
-    Train the XGBoost model
+    Generates a DataFrame with mock data representing startup agent scores.
+    The logic is designed to create plausible correlations between scores and success.
     """
-    # Prepare features and target
-    feature_columns = ['pitch_score', 'trust_score', 'momentum_score']
-    X = data[feature_columns]
-    y = data['funded']
-    
-    # Split data
+    print(f"Generating {num_samples} mock data samples...")
+
+    # Generate base scores from a uniform distribution (0-10)
+    data = {
+        "pitch_strength_score": np.random.uniform(1, 10, num_samples),
+        "identity_model_score": np.random.uniform(1, 10, num_samples),
+        "momentum_tracker_score": np.random.uniform(1, 10, num_samples),
+    }
+    df = pd.DataFrame(data)
+
+    # --- Create a plausible "success" condition ---
+    # Success is more likely if the *average* score is high, with some randomness.
+    # We add noise to make the prediction task non-trivial for the model.
+    # The threshold (6.0) is arbitrary but creates a reasonably balanced dataset.
+    success_probability = df.mean(axis=1) / 10 # Normalize avg score to be between 0 and 1
+
+    # Introduce non-linearity: strong pitches matter more
+    success_probability += (df['pitch_strength_score'] / 10) * 0.2
+
+    # Add random noise to make it realistic
+    noise = np.random.normal(0, 0.1, num_samples)
+    final_probability = np.clip(success_probability + noise, 0, 1)
+
+    # Create the binary target variable 'will_fund' (1 for success, 0 for failure)
+    df['will_fund'] = (final_probability > 0.65).astype(int)
+
+    print("Mock data generated. Class distribution:")
+    print(df['will_fund'].value_counts(normalize=True))
+
+    return df
+
+def train_model():
+    """
+    Main function to orchestrate data generation, model training, and saving.
+    """
+    # Generate the data
+    df = generate_mock_data(NUM_SAMPLES)
+
+    # Define features (X) and target (y)
+    features = ["pitch_strength_score", "identity_model_score", "momentum_tracker_score"]
+    target = "will_fund"
+
+    X = df[features]
+    y = df[target]
+
+    # Split data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
-    
-    # Train XGBoost model
-    model = xgb.XGBClassifier(
-        n_estimators=100,
-        max_depth=4,
-        learning_rate=0.1,
-        random_state=42,
-        eval_metric='logloss'
-    )
-    
-    model.fit(X_train, y_train)
-    
-    # Evaluate model
-    y_pred = model.predict(X_test)
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
-    
-    print("Model Performance:")
-    print(f"ROC AUC Score: {roc_auc_score(y_test, y_pred_proba):.3f}")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-    
-    # Cross-validation
-    cv_scores = cross_val_score(model, X, y, cv=5, scoring='roc_auc')
-    print(f"\nCross-validation ROC AUC: {cv_scores.mean():.3f} (+/- {cv_scores.std() * 2:.3f})")
-    
-    return model
 
-def save_model(model: xgb.XGBClassifier, model_path: str):
-    """Save the trained model"""
-    Path(model_path).parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, model_path)
-    print(f"Model saved to {model_path}")
-
-def main():
-    """Main training pipeline"""
-    print("Starting model training for Project Chimera...")
-    
-    # Generate synthetic data
-    print("Generating synthetic training data...")
-    data = generate_synthetic_data(n_samples=2000)
-    
-    print(f"Dataset shape: {data.shape}")
-    print(f"Positive class ratio: {data['funded'].mean():.2%}")
-    
-    # Train model
+    # --- Initialize and train the XGBoost Classifier ---
+    # These are standard, robust parameters for XGBoost.
     print("\nTraining XGBoost model...")
-    model = train_model(data)
-    
-    # Save model
-    model_path = "app/ml/predictor.bst"
-    save_model(model, model_path)
-    
-    # Feature importance
-    print("\nFeature Importance:")
-    feature_names = ['pitch_score', 'trust_score', 'momentum_score']
-    importance_scores = model.feature_importances_
-    
-    for name, importance in zip(feature_names, importance_scores):
-        print(f"{name}: {importance:.3f}")
-    
-    print("\nModel training completed successfully!")
+    xgb_classifier = xgb.XGBClassifier(
+        objective='binary:logistic',
+        eval_metric='logloss',
+        n_estimators=100,
+        learning_rate=0.1,
+        max_depth=3,
+        use_label_encoder=False,
+        random_state=42
+    )
+
+    xgb_classifier.fit(X_train, y_train)
+    print("Model training complete.")
+
+    # --- Evaluate the model on the test set ---
+    print("\nEvaluating model performance...")
+    y_pred = xgb_classifier.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"Test Set Accuracy: {accuracy * 100:.2f}%")
+    print("Classification Report:")
+    print(classification_report(y_test, y_pred))
+
+    # --- Save the trained model ---
+    print(f"\nSaving model to: {MODEL_PATH}")
+    xgb_classifier.save_model(MODEL_PATH)
+    print("Model saved successfully.")
+
 
 if __name__ == "__main__":
-    main()
+    # This block ensures the training process runs only when the script is executed directly.
+    train_model()
