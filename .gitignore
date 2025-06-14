@@ -202,3 +202,5 @@ logs/
 models/
 .DS_Store
 Thumbs.db
+docs/demo_script.md
+DEMO_PREPARATION.md
